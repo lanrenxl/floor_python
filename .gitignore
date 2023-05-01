@@ -1,0 +1,20 @@
+# 默认忽略的文件
+/shelf/
+/workspace.xml
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.class
+*.pyc
+*.pyo
+*.exe
+*.dll
+*.so
+*.lib
+*.bak
+*.tmp
+*.swp
+*.zip
+# 忽略bmp文件
+*.bmp
