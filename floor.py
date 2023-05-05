@@ -213,6 +213,7 @@ class Bubble_img:
         self.__height = _height
         self.__bubble_img = baseImage  # 白色背景
         self.__generated = False
+        self.testImage = np.zeros((self.__height, self.__width, 3), np.uint8)
 
     def addBubble(self, _circle: Circle, p_type: int, diff: int):
         if p_type not in self.__bubbles.keys():
@@ -221,7 +222,13 @@ class Bubble_img:
 
     def addBridge(self, p_type1: int, diff1: int, p_type2: int, diff2: int):
         if p_type1 in self.__bubbles.keys() and p_type2 in self.__bubbles.keys():
-            self.__bridges.append([p_type1, diff1, p_type2, diff2])
+            if [p_type1, diff1, p_type2, diff2] not in self.__bridges:
+                self.__bridges.append([p_type1, diff1, p_type2, diff2])
+
+    def addLineInImg(self, p1: Point, p2: Point):
+        # 写一个bresenham算法, 绘制直线p1->p2, 写到图像__bubble_img中
+        # 用cv.line
+        cv.line(self.__bubble_img, (p1.y, p1.x), (p2.y, p2.x), (255, 193, 0), 5)
 
     def GenerateImage(self):
         if self.__generated:
@@ -236,6 +243,8 @@ class Bubble_img:
                 size = self.__bubbles[p_type][diff].radius
                 center = self.__bubbles[p_type][diff].center
                 cv.circle(self.__bubble_img, (center.y, center.x), int(size / 2), (68, 114, 197), -1)
+        self.__generated = True
+        cv.imwrite("__bubble_img.bmp", self.__bubble_img)
         return self.__bubble_img
 
 
@@ -271,29 +280,36 @@ class Grid_img:
                         center.x = i - epsilon
                         center.y = j - epsilon
                     # output_img[int(center.x), int(center.y)] = 100
-                    cv.circle(output_img, (int(center.y), int(center.x)), int(self.__thickness), (193, 255, 0), cv.FILLED)
+                    cv.circle(output_img, (int(center.y), int(center.x)), int(self.__thickness), (193, 255, 0),
+                              cv.FILLED)
         # cv.imwrite("test.bmp", output_img)
         return output_img
 
 
 # 获取膨胀aabb
 def get_expansion_AABB(min_x1, min_y1, max_x1, max_y1, min_x2, min_y2, max_x2, max_y2, thickness):
+    # 获取没有相交的轴, 并以该方向进行膨胀
+    aabb1 = AABB(Point(min_x1, min_y1), Point(max_x1, max_y1))
+    aabb2 = AABB(Point(min_x2, min_y2), Point(max_x2, max_y2))
     min_x = max(min_x1, min_x2)
     max_x = min(max_x1, max_x2)
     min_y = max(min_y1, min_y2)
     max_y = min(max_y1, max_y2)
-    if min_x > max_x:
-        aabb1 = AABB(Point(min_x1 - thickness, min_y1), Point(max_x1 + thickness, max_y1))
-        aabb2 = AABB(Point(min_x2 - thickness, min_y2), Point(max_x2 + thickness, max_y2))
-        return aabb1, aabb2
-    elif min_y > max_y:
-        aabb1 = AABB(Point(min_x1, min_y1 - thickness), Point(max_x1, max_y1 + thickness))
-        aabb2 = AABB(Point(min_x2, min_y2 - thickness), Point(max_x2, max_y2 + thickness))
-        return aabb1, aabb2
-    else:
-        aabb1 = AABB(Point(min_x1, min_y1), Point(max_x1, max_y1))
-        aabb2 = AABB(Point(min_x2, min_y2), Point(max_x2, max_y2))
-        return aabb1, aabb2
+    if min_y < max_y:  # y轴方向相交
+        aabb1.min_p.x = min_x1 - thickness
+        aabb1.max_p.x = max_x1 + thickness
+        aabb2.min_p.x = min_x2 - thickness
+        aabb2.max_p.x = max_x2 + thickness
+    if min_x < max_x:  # x轴方向相交
+        aabb1.min_p.y = min_y1 - thickness
+        aabb1.max_p.y = max_y1 + thickness
+        aabb2.min_p.y = min_y2 - thickness
+        aabb2.max_p.y = max_y2 + thickness
+    return aabb1, aabb2
+
+
+def visualizeAABB(image: np.ndarray, aabb: AABB, color=(255, 255, 0)):
+    cv.rectangle(image, (aabb.min_p.x, aabb.min_p.y), (aabb.max_p.x, aabb.max_p.y), color, 1)
 
 
 class Floor_plan:
@@ -301,6 +317,7 @@ class Floor_plan:
         # < img_type, <像素b通道, [size, binaries_index, sum_x, sum_y, min_x, min_y, max_x, max_y] > >
         self.statistic = dict()
         self.img = image.copy()
+        cv.imwrite("get.png", self.img)
         self.width, self.height, self.channel = self.img.shape
         self.wall = None
         self.skeleton = None
@@ -327,6 +344,19 @@ class Floor_plan:
                     self.statistic[pixel_type][diff] = [size + 1, index, sum_x + i, sum_y + j, min_x, min_y, max_x,
                                                         max_y]
                 elif pixel_type in self.statistic.keys() and diff not in self.statistic[pixel_type].keys():
+                    if pixel_type == img_type.living_room:
+                        # 客厅只有一个
+                        itemDict = self.statistic[pixel_type]
+                        for key in itemDict.keys():
+                            [size, index, sum_x, sum_y, min_x, min_y, max_x, max_y] = self.statistic[pixel_type][key]
+                            min_x = min(min_x, j)
+                            max_x = max(max_x, j)
+                            min_y = min(min_y, i)
+                            max_y = max(max_y, i)
+                            self.binaries[index][i][j] = 255
+                            self.statistic[pixel_type][key] = [size + 1, index, sum_x + i, sum_y + j, min_x, min_y,
+                                                               max_x, max_y]
+                        continue
                     # 存在相同label但是另外一间房
                     self.binaries.append(np.zeros((self.width, self.height), np.uint8))
                     self.binaries[len(self.binaries) - 1][i][j] = 255
@@ -449,7 +479,14 @@ class Floor_plan:
                         [_, _, _, _, min_x2, min_y2, max_x2, max_y2] = self.statistic[p_type2][diff2]
                         aabb1, aabb2 = get_expansion_AABB(min_x1, min_y1, max_x1, max_y1, min_x2, min_y2, max_x2,
                                                           max_y2, self.thickness)
+                        # aabb1, aabb2 = get_expansion_AABB(AABB(min_x1, min_y1, max_x1, max_y1), AABB(min_x2, min_y2, max_x2, max_y2), self.thickness)
+                        # testImage = self.img.copy()
+                        # visualizeAABB(testImage, aabb1)
+                        # visualizeAABB(testImage, aabb2)
                         collision = get_AABB_collision(aabb1, aabb2)
+                        # if collision is not None:
+                        #     visualizeAABB(testImage, collision, (0, 255, 255))
+                        # cv.imshow("test"+str(p_type1)+str(diff1)+str(p_type2)+str(diff2), testImage)
                         if collision is not None:
                             for i in range(collision.min_p.y, collision.max_p.y):
                                 for j in range(collision.min_p.x, collision.max_p.x):
@@ -464,7 +501,6 @@ class Floor_plan:
         retDict = dict()
         retDict["thickness"] = int(self.thickness)
         retDict["roomInfo"] = list()
-        print(self.statistic)
         room_set = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15}
         for key in self.statistic.keys():
             if key not in room_set:
@@ -473,9 +509,9 @@ class Floor_plan:
             for version in self.statistic[key]:
                 infoList = self.statistic[key][version]
                 tmpDict = dict()
-                tmpDict["name"] = newKey+str(version)
+                tmpDict["name"] = newKey + str(version)
                 tmpDict["size"] = infoList[0]
-                tmpDict["center"] = [infoList[2]/infoList[0], infoList[3]/infoList[0]]
+                tmpDict["center"] = [infoList[2] / infoList[0], infoList[3] / infoList[0]]
                 tmpDict["min"] = [infoList[4], infoList[5]]
                 tmpDict["max"] = [infoList[6], infoList[7]]
                 retDict["roomInfo"].append(tmpDict)
@@ -528,9 +564,11 @@ class Floor_plan:
         interior_door = self.__get_binary_img(img_type.interior_door)[0]
 
         door = cv.add(front_door, interior_door)
+        cv.imshow("door", door)
         self.wall = cv.add(interior_wall, exterior_wall)
         self.wall = cv.add(self.wall, door)
         cv.imshow("wall", self.wall)
+        cv.imshow("wall-door", self.wall - door)
         # 生成墙体骨架和获取墙体厚度
         self.skeleton = self.get_binary_skeleton()
         cv.imshow("skeleton", self.skeleton)
@@ -548,5 +586,17 @@ class Floor_plan:
 
 if __name__ == '__main__':
     pass
-    floor_plan = Floor_plan(cv.imread("./dataset/0.png"))
-    floor_plan.getResult()
+    floor_plan = Floor_plan(cv.imread("./dataset/6.png"))
+    floor_plan.run()
+    # testImage = cv.imread("./dataset/6.png")
+    # box1 = AABB(Point(60, 60), Point(100, 100))
+    # box2 = AABB(Point(50, 50), Point(150, 150))
+    # box1, box2 = get_expansion_AABB(60, 60, 100, 100, 50, 50, 150, 150, 3)
+    # box3 = get_AABB_collision(box1, box2)
+    # if box3:
+    #     visualizeAABB(testImage, box3)
+    # visualizeAABB(testImage, box1)
+    # visualizeAABB(testImage, box2)
+    # cv.imshow("test", testImage)
+    # cv.waitKey(0)
+    # cv.destroyAllWindows()
