@@ -8,6 +8,11 @@ from subTask import SubTaskParam
 import concurrent.futures
 
 
+# 子任务运行线程
+# subtaskParam: 子任务的运行参数
+# image: 子任务的源图像
+# ID, 子任务的标识, 用于后续顺序发送子任务结果
+# 返回值: 线程任务ID, 任务统计结果json字符串, 网格图, 气泡图(拓扑图)
 def subTaskThread(subtaskParam: SubTaskParam, image: np.ndarray, ID: int):
     subTask = SubTask(subtaskParam, image, ID)
     logging.info("subtask %d created", ID)
@@ -16,11 +21,14 @@ def subTaskThread(subtaskParam: SubTaskParam, image: np.ndarray, ID: int):
     return ID, subTask.retStr, subTask.grid_img, subTask.bubble_img
 
 
+# python后端总接口
 class Frontend:
+    # 初始化, 初始化通信底层服务器
     def __init__(self):
         self.__server = SocketCppServer()
         self.subTaskNum = 0
 
+    # 从C++端获取一批任务json解析出子任务数量
     def __getTaskParam(self):
         # 获取一批任务的参数
         self.subTaskNum = 0
@@ -41,6 +49,7 @@ class Frontend:
                 self.subTaskNum = taskParamJS["subTaskNum"]
             self.__server.sendMessage("success\0")
 
+    # 获取子任务参数
     def __getSubTaskParam(self):
         logging.info("start wait subtask param ")
         subTaskParamStr = self.__server.getMessage()
@@ -58,6 +67,7 @@ class Frontend:
             self.__server.sendMessage("success\0")
             return subTaskParam
 
+    # 获取子任务的源图像
     def __getSubTaskImage(self, subTaskParam: SubTaskParam):
         # 返回获取的图像, cv2的格式, 再该函数中全部封装好
         imageBytes = self.__server.getBuffer(subTaskParam.width * subTaskParam.height * subTaskParam.form)
@@ -71,6 +81,7 @@ class Frontend:
         return image
         pass
 
+    # 发送子任务处理结果图像
     def __sendSubTaskImage(self, _image: np.ndarray):
         # 发送图像, 包括提前发送图像格式, 再发送图像本身
         w, h, c = _image.shape
@@ -98,6 +109,7 @@ class Frontend:
             if len(res) > 0:
                 logging.info("success get success message from cpp client: %s", res)
 
+    # 发送结果统计信息json字符串
     def __sendRetJS(self, retStr):
         retStr += '\0'
         self.__server.sendMessage(retStr)
@@ -105,6 +117,7 @@ class Frontend:
         if len(res) > 0:
             logging.info("success get success message from cpp client: %s", res)
 
+    # 运行主流程
     def taskRun(self):
         while True:
             self.__getTaskParam()

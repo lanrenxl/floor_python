@@ -12,6 +12,9 @@ import math
 import json
 
 
+# @brief Peak_type
+# 枚举类型enum, 用于区分几何形状拐角的类型
+# 一共有8种类型, 分别是四角突出与四角凹入
 class Peak_type:
     left_up = 0
     right_up = 1
@@ -44,6 +47,7 @@ class img_type:
     wall_in = 16  # 内墙
     external_area = 17  # 外部区域
 
+    # 根据枚举类型获取类型名字符串
     @staticmethod
     def get_str(p_type: int):
         if p_type == img_type.exterior_wall:
@@ -87,7 +91,8 @@ class img_type:
         else:
             return "invalid type"
 
-    # 获取该像素的类型
+    # 根据三通道像素值获取该像素标注的类型
+    # pixel为像素值, 必须是三通道BGR类型
     @staticmethod
     def get_type(pixel):
         r = pixel[2]
@@ -132,6 +137,9 @@ class img_type:
             return None
 
 
+# 根据像素为中心的3x3区域, 判断当前位置是否为拐点
+# img: 输入图像
+# i, j: 像素位置
 def get_peak(img, i, j):
     # 根据形状特征判断是否为顶点
     p1 = img[i - 1, j - 1]
@@ -163,6 +171,10 @@ def get_peak(img, i, j):
         return False, Peak_type.left_up
 
 
+# 获取array中与x值最接近的值
+# x: 查找的目标值
+# array: 查找的序列
+# 返回值: 与x值最接近的值
 def get_nearest_in_array(x, array):
     output = array[0]
     min_abs = abs(array[0] - x)
@@ -174,24 +186,31 @@ def get_nearest_in_array(x, array):
     return output
 
 
+# 二维点结构体, 包含x与y轴的位置
 class Point:
     def __init__(self, _x: int, _y: int):
         self.x = int(_x)
         self.y = int(_y)
 
 
+# 包围盒结构体, 该包围盒为轴对齐包围盒
+# 主要包含x轴的最大最小值和y轴的最大最小值
 class AABB:
     def __init__(self, _min_p: Point, _max_p: Point):
         self.min_p = _min_p
         self.max_p = _max_p
 
 
+# 圆形结构体, 包含中点值与半径长度
 class Circle:
     def __init__(self, _radius: int, _center: Point):
         self.radius = int(_radius)
         self.center = _center
 
 
+# 获取两个包围的交集
+# box1和box2为求交的两个包围盒
+# 返回值: 若相交则返回相交区域的包围盒, 若不相交则返回None
 def get_AABB_collision(box1: AABB, box2: AABB):
     min_x = max(box2.min_p.x, box1.min_p.x)
     max_x = min(box2.max_p.x, box1.max_p.x)
@@ -204,10 +223,15 @@ def get_AABB_collision(box1: AABB, box2: AABB):
     return None
 
 
+# 气泡图, 拓扑图的封装类
 class Bubble_img:
+    # 初始化函数
+    # _width, _height: 图像的长与宽
+    # baseImage, 背景图像
     def __init__(self, _width: int, _height: int, baseImage):
-        # cv.connectedComponentsWithStats()
+        # <p_type, <diff, Circle> >
         self.__bubbles = dict()
+        # [[p_type1, diff1, p_type2, diff2] ... ]
         self.__bridges = list()
         self.__width = _width
         self.__height = _height
@@ -215,21 +239,25 @@ class Bubble_img:
         self.__generated = False
         self.testImage = np.zeros((self.__height, self.__width, 3), np.uint8)
 
+    # 添加新的房间气泡数据
     def addBubble(self, _circle: Circle, p_type: int, diff: int):
+        # 若没有这一项则新增一个dict
         if p_type not in self.__bubbles.keys():
             self.__bubbles[p_type] = dict()
         self.__bubbles[p_type][diff] = _circle
 
+    # 添加两个气泡之间的联通记录
     def addBridge(self, p_type1: int, diff1: int, p_type2: int, diff2: int):
         if p_type1 in self.__bubbles.keys() and p_type2 in self.__bubbles.keys():
             if [p_type1, diff1, p_type2, diff2] not in self.__bridges:
                 self.__bridges.append([p_type1, diff1, p_type2, diff2])
 
+    # 向图像中添加一条直线
     def addLineInImg(self, p1: Point, p2: Point):
-        # 写一个bresenham算法, 绘制直线p1->p2, 写到图像__bubble_img中
         # 用cv.line
         cv.line(self.__bubble_img, (p1.y, p1.x), (p2.y, p2.x), (255, 193, 0), 5)
 
+    # 根据已有的气泡和联通记录生成拓扑图
     def GenerateImage(self):
         if self.__generated:
             return self.__bubble_img
@@ -248,18 +276,25 @@ class Bubble_img:
         return self.__bubble_img
 
 
+# 网格图抽象类
 class Grid_img:
+    # 初始化函数
+    # wall_img: 墙体图像, 之后的图像墙体交界点都绘制在该图像上
+    # thickness: 墙体厚度, 绘制的交界点大小由该参数决定
     def __init__(self, _wall_img, _thickness):
         self.__width, self.__height = _wall_img.shape
         self.__wall_img = _wall_img
         self.__thickness = _thickness
 
+    # 生成图像
     def GenerateImage(self):
         output_img = 255 * np.ones((self.__width, self.__height, 3), np.uint8)
         for i in range(self.__height):
             for j in range(self.__width):
                 if self.__wall_img[i][j] != 0:
                     output_img[i][j] = (0, 0, 0)
+        # 判断每一个像素周围的3x3区域是否符合拐点特征
+        # 根据拐点的位置方向依据厚度进行偏移, 计算出墙体交界点的位置, 然后绘制出交界点
         for i in range(1, self.__width - 1):
             for j in range(1, self.__height - 1):
                 is_peak, p_type = get_peak(self.__wall_img, i, j)
@@ -308,20 +343,28 @@ def get_expansion_AABB(min_x1, min_y1, max_x1, max_y1, min_x2, min_y2, max_x2, m
     return aabb1, aabb2
 
 
+# 用于测试, 可视化包围盒到图像上
 def visualizeAABB(image: np.ndarray, aabb: AABB, color=(255, 255, 0)):
     cv.rectangle(image, (aabb.min_p.x, aabb.min_p.y), (aabb.max_p.x, aabb.max_p.y), color, 1)
 
 
+# 户型图像处理模块
 class Floor_plan:
+    # 输入为图像原始数据
     def __init__(self, image: np.ndarray):
         # < img_type, <像素b通道, [size, binaries_index, sum_x, sum_y, min_x, min_y, max_x, max_y] > >
         self.statistic = dict()
+        # 拷贝数据源
         self.img = image.copy()
-        cv.imwrite("get.png", self.img)
+        # 长宽值以及通道数
         self.width, self.height, self.channel = self.img.shape
+        # 墙体图
         self.wall = None
+        # 墙体骨架图
         self.skeleton = None
+        # 提取出来的各个区域的二值图
         self.binaries = list()  # 该列表记录每一种颜色的二值图
+        # 计算出来的墙体厚度
         self.thickness = 0
         logging.info("initial floor plan")
         self.__run_statistic()
@@ -346,16 +389,16 @@ class Floor_plan:
                 elif pixel_type in self.statistic.keys() and diff not in self.statistic[pixel_type].keys():
                     if pixel_type == img_type.living_room:
                         # 客厅只有一个
-                        itemDict = self.statistic[pixel_type]
-                        for key in itemDict.keys():
-                            [size, index, sum_x, sum_y, min_x, min_y, max_x, max_y] = self.statistic[pixel_type][key]
-                            min_x = min(min_x, j)
-                            max_x = max(max_x, j)
-                            min_y = min(min_y, i)
-                            max_y = max(max_y, i)
-                            self.binaries[index][i][j] = 255
-                            self.statistic[pixel_type][key] = [size + 1, index, sum_x + i, sum_y + j, min_x, min_y,
-                                                               max_x, max_y]
+                        # itemDict = self.statistic[pixel_type]
+                        # for key in itemDict.keys():
+                        #     [size, index, sum_x, sum_y, min_x, min_y, max_x, max_y] = self.statistic[pixel_type][key]
+                        #     min_x = min(min_x, j)
+                        #     max_x = max(max_x, j)
+                        #     min_y = min(min_y, i)
+                        #     max_y = max(max_y, i)
+                        #     self.binaries[index][i][j] = 255
+                        #     self.statistic[pixel_type][key] = [size + 1, index, sum_x + i, sum_y + j, min_x, min_y,
+                        #                                        max_x, max_y]
                         continue
                     # 存在相同label但是另外一间房
                     self.binaries.append(np.zeros((self.width, self.height), np.uint8))
@@ -367,6 +410,7 @@ class Floor_plan:
                     self.binaries[len(self.binaries) - 1][i][j] = 255
                     self.statistic[pixel_type] = {diff: [1, len(self.binaries) - 1, i, j, j, i, j, i]}
 
+    # 根据p_type获取对应的二值图
     def __get_binary_img(self, binary_type: int):
         output = list()
         # 根据输入类型获取该类型的二值图
@@ -377,6 +421,7 @@ class Floor_plan:
                 output.append(self.binaries[index])
         return output
 
+    # 提取墙体骨架
     def get_binary_skeleton(self):
         # 获取墙体骨架
         self.wall[self.wall == 255] = 1
@@ -418,6 +463,7 @@ class Floor_plan:
         output = cv.add(horizon_img, vertical_img)
         return output
 
+    # 根据原墙体面积和墙体骨架面积比例计算墙体的大致厚度
     def __calc_wall_thickness(self):
         # 获取墙体厚度和膨胀后的图
         binary_size = 0
@@ -447,6 +493,7 @@ class Floor_plan:
                             expansion[x, y] = 255
         return thickness, expansion
 
+    # 生成气泡图(拓扑图)
     def generate_bubble_img(self):
         # 获取边缘轮廓图, 用几何特征, p的四邻域内有黑色则置为1
         baseImg = self.__get_outline()
@@ -497,6 +544,16 @@ class Floor_plan:
         bubble_image = bb_img.GenerateImage()
         return bubble_image
 
+    def GenerateTopologyImage(self):
+        # 获取边缘轮廓图, 用几何特征, p的四邻域内有黑色则置为1
+        baseImg = self.__get_outline()
+        bb_img = Bubble_img(self.width, self.height, baseImg)
+        # 获取所有的门, connectedComponentsWithStats() https://zhuanlan.zhihu.com/p/101371934
+        front_door = self.__get_binary_img(img_type.front_door)[0]
+        interior_door = self.__get_binary_img(img_type.interior_door)[0]
+        door_img = cv.add(front_door, interior_door)
+
+    # 生成统计的结果信息
     def __serialize_result(self):
         retDict = dict()
         retDict["thickness"] = int(self.thickness)
@@ -518,6 +575,7 @@ class Floor_plan:
 
         return json.dumps(retDict)
 
+    # 获取墙体外轮廓
     def __get_outline(self):
         exterior_area = self.__get_binary_img(img_type.external_area)[0]
         output = 255 * np.ones((self.width, self.height, 3), np.uint8)
@@ -531,6 +589,7 @@ class Floor_plan:
                             output[i + x][j + y] = (0, 0, 0)
         return output
 
+    # 整体运行流程
     def getResult(self):
         interior_wall = self.__get_binary_img(img_type.interior_wall)[0]
         exterior_wall = self.__get_binary_img(img_type.exterior_wall)[0]
@@ -552,6 +611,7 @@ class Floor_plan:
         retStr = self.__serialize_result()
         return retStr, grid_img, bubble_img
 
+    # 本地测试
     def run(self):
         # 原图
         cv.namedWindow("Image")
@@ -586,7 +646,7 @@ class Floor_plan:
 
 if __name__ == '__main__':
     pass
-    floor_plan = Floor_plan(cv.imread("./dataset/6.png"))
+    floor_plan = Floor_plan(cv.imread("./dataset/10.png"))
     floor_plan.run()
     # testImage = cv.imread("./dataset/6.png")
     # box1 = AABB(Point(60, 60), Point(100, 100))
