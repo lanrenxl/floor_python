@@ -19,4 +19,12 @@ def log_testing():
     logging.critical('critical，用来打印一些致命的错误信息，等级最高')
 
 
-log_testing()
+import numpy as np
+from scipy.spatial import ConvexHull
+
+points = np.random.rand(30, 2)  # 30 random points in 2-D
+hull = ConvexHull(points)
+
+print(hull.vertices)
+
+# log_testing()

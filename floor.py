@@ -10,6 +10,9 @@ import numpy as np
 from skimage import morphology
 import math
 import json
+from scipy.spatial import ConvexHull
+from itertools import combinations
+from itertools import permutations
 
 
 # @brief Peak_type
@@ -169,6 +172,37 @@ def get_peak(img, i, j):
         return True, Peak_type.in_left_up
     else:
         return False, Peak_type.left_up
+
+
+def is_peak(img, i, j):
+    # 根据形状特征判断是否为顶点
+    p1 = img[i - 1, j - 1]
+    p2 = img[i, j - 1]
+    p3 = img[i + 1, j - 1]
+    p4 = img[i - 1, j]
+    p5 = img[i, j]
+    p6 = img[i + 1, j]
+    p7 = img[i - 1, j + 1]
+    p8 = img[i, j + 1]
+    p9 = img[i + 1, j + 1]
+    if p5 == p6 and p6 == p8 and p8 == p9 and p1 != p5 and p2 != p5 and p3 != p5 and p4 != p5 and p7 != p5 and p5 == 0:
+        return True
+    elif p4 == p5 and p5 == p7 and p7 == p8 and p1 != p5 and p2 != p5 and p3 != p5 and p6 != p5 and p9 != p5 and p5 == 0:
+        return True
+    elif p1 == p2 and p2 == p5 and p5 == p4 and p3 != p5 and p6 != p5 and p7 != p5 and p8 != p5 and p9 != p5 and p5 == 0:
+        return True
+    elif p2 == p3 and p3 == p6 and p6 == p5 and p1 != p5 and p4 != p5 and p7 != p5 and p8 != p5 and p9 != p5 and p5 == 0:
+        return True
+    elif p1 == p2 and p2 == p3 and p3 == p4 and p4 == p5 and p5 == p6 and p6 == p7 and p7 == p8 and p8 != p9 and p5 == 0:
+        return True
+    elif p1 == p2 and p2 == p3 and p3 == p4 and p4 == p5 and p5 == p6 and p6 == p9 and p9 == p8 and p7 != p8 and p5 == 0:
+        return True
+    elif p9 == p8 and p8 == p7 and p7 == p6 and p6 == p5 and p5 == p4 and p1 == p4 and p1 == p2 and p2 != p3 and p5 == 0:
+        return True
+    elif p9 == p8 and p8 == p7 and p7 == p6 and p6 == p5 and p5 == p4 and p4 == p3 and p3 == p2 and p2 != p1 and p5 == 0:
+        return True
+    else:
+        return False
 
 
 # 获取array中与x值最接近的值
@@ -344,8 +378,53 @@ def get_expansion_AABB(min_x1, min_y1, max_x1, max_y1, min_x2, min_y2, max_x2, m
 
 
 # 用于测试, 可视化包围盒到图像上
-def visualizeAABB(image: np.ndarray, aabb: AABB, color=(255, 255, 0)):
+def visualize_AABB(image: np.ndarray, aabb: AABB, color=(255, 255, 0)):
     cv.rectangle(image, (aabb.min_p.x, aabb.min_p.y), (aabb.max_p.x, aabb.max_p.y), color, 1)
+
+
+def separate_rectangle(x, y, width, height, doorImage, img):
+    points = list()
+    output = list()
+    for i in range(y-1, y + height+1):
+        for j in range(x-1, x + width+1):
+            res = is_peak(doorImage, i, j)
+            if res:
+                points.append(Point(j, i))
+    nums = len(points) / 4
+    getNum = 0
+    for c in combinations(points, 4):
+        point1 = c[0]
+        point2 = c[1]
+        point3 = c[2]
+        point4 = c[3]
+        pointList = [[point1.x, point1.y], [point2.x, point2.y], [point3.x, point3.y], [point4.x, point4.y]]
+        hull = ConvexHull(pointList)
+        hullPoints = hull.vertices
+        size = 0
+        for i in range(len(hullPoints)):
+            xi = pointList[hullPoints[i]][0]
+            yi = pointList[hullPoints[i]][1]
+            xi1 = 0
+            yi2 = 0
+            if i == len(hullPoints)-1:
+                xi1 = pointList[hullPoints[0]][0]
+                yi1 = pointList[hullPoints[0]][1]
+            else:
+                xi1 = pointList[hullPoints[i+1]][0]
+                yi1 = pointList[hullPoints[i+1]][1]
+            size += xi*yi1-xi1*yi
+        size = abs(size) / 2
+        maxX = max((point1.x, point2.x, point3.x, point4.x))
+        minX = min((point1.x, point2.x, point3.x, point4.x))
+        maxY = max((point1.y, point2.y, point3.y, point4.y))
+        minY = min((point1.y, point2.y, point3.y, point4.y))
+        aabbSize = (maxX - minX) * (maxY - minY)
+        threshold = 0.09
+        if abs(size - aabbSize) / aabbSize < threshold and doorImage[int((maxY+minY)/2)][int((maxX+minX)/2)] != 0:
+            if [minX, maxX, minY, maxY] not in output:
+                output.append([minX, minY, maxX, maxY])
+                getNum += 1
+    return output
 
 
 # 户型图像处理模块
@@ -422,7 +501,7 @@ class Floor_plan:
         return output
 
     # 提取墙体骨架
-    def get_binary_skeleton(self):
+    def __get_binary_skeleton(self):
         # 获取墙体骨架
         self.wall[self.wall == 255] = 1
         skeleton = morphology.skeletonize(self.wall)
@@ -494,7 +573,7 @@ class Floor_plan:
         return thickness, expansion
 
     # 生成气泡图(拓扑图)
-    def generate_bubble_img(self):
+    def __generate_bubble_img(self):
         # 获取边缘轮廓图, 用几何特征, p的四邻域内有黑色则置为1
         baseImg = self.__get_outline()
         bb_img = Bubble_img(self.width, self.height, baseImg)
@@ -544,7 +623,7 @@ class Floor_plan:
         bubble_image = bb_img.GenerateImage()
         return bubble_image
 
-    def GenerateTopologyImage(self):
+    def __generate_topology_image(self):
         # 获取边缘轮廓图, 用几何特征, p的四邻域内有黑色则置为1
         baseImg = self.__get_outline()
         bb_img = Bubble_img(self.width, self.height, baseImg)
@@ -552,6 +631,64 @@ class Floor_plan:
         front_door = self.__get_binary_img(img_type.front_door)[0]
         interior_door = self.__get_binary_img(img_type.interior_door)[0]
         door_img = cv.add(front_door, interior_door)
+        output = cv.connectedComponentsWithStats(door_img, 4, cv.CV_32S)
+        labels = output[1]
+        stats = output[2]
+        room_set = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15}
+        # 添加气泡
+        for p_type in self.statistic.keys():
+            if p_type in room_set:
+                for diff in self.statistic[p_type].keys():
+                    [size, _, sum_x, sum_y, _, _, _, _] = self.statistic[p_type][diff]
+                    center = Point(sum_x / size, sum_y / size)
+                    bb_img.addBubble(Circle(int(math.pow(size / 3.1415926, 0.5)), center), p_type, diff)
+        testImg = self.img.copy()
+        doorList = list()
+        for item in stats:
+            x = item[0]
+            y = item[1]
+            width = item[2]
+            height = item[3]
+            size = item[4]
+            if size > (self.width * self.height) / 2:
+                continue
+            if size < (width * height):
+                aabbs = separate_rectangle(x, y, width, height, door_img, self.img)
+                for aabb in aabbs:
+                    doorList.append(aabb)
+            doorList.append([x, y, x + width, y + height])
+
+        for item in doorList:
+            minX = item[0]
+            minY = item[1]
+            maxX = item[2]
+            maxY = item[3]
+            width = maxX - minX
+            height = maxY - minY
+            visualize_AABB(testImg, AABB(Point(minX, minY), Point(maxX, maxY)))
+            extend = 4
+            if height < width:
+                mid_x = int((minX + maxX) / 2)
+                y1 = (minY - extend)
+                y2 = (maxY + extend)
+                pixel1 = self.img[y1][mid_x]
+                pixel2 = self.img[y2][mid_x]
+                p_type1 = img_type.get_type(pixel1)
+                p_type2 = img_type.get_type(pixel2)
+                bb_img.addBridge(p_type1, pixel1[0], p_type2, pixel2[0])
+            elif height > width:
+                mid_y = int((minY + maxY) / 2)
+                x1 = minX - extend
+                x2 = maxX + extend
+                pixel1 = self.img[mid_y][x1]
+                pixel2 = self.img[mid_y][x2]
+                p_type1 = img_type.get_type(pixel1)
+                p_type2 = img_type.get_type(pixel2)
+                bb_img.addBridge(p_type1, pixel1[0], p_type2, pixel2[0])
+        cv.imshow("test", testImg)
+        # 生成拓扑图
+        bubble_image = bb_img.GenerateImage()
+        return bubble_image
 
     # 生成统计的结果信息
     def __serialize_result(self):
@@ -599,13 +736,14 @@ class Floor_plan:
         self.wall = cv.add(interior_wall, exterior_wall)
         self.wall = cv.add(self.wall, door)
         # 生成墙体骨架和获取墙体厚度
-        self.skeleton = self.get_binary_skeleton()
+        self.skeleton = self.__get_binary_skeleton()
         self.thickness, expansion = self.__calc_wall_thickness()
         # 输入墙体图生成网格图
         grid = Grid_img(self.wall, self.thickness)
         grid_img = grid.GenerateImage()
         # 生成气泡图
-        bubble_img = self.generate_bubble_img()
+        # bubble_img = self.generate_bubble_img()
+        bubble_img = self.__generate_topology_image()
         # cv.waitKey(0)
         # cv.destroyAllWindows()
         retStr = self.__serialize_result()
@@ -618,27 +756,28 @@ class Floor_plan:
 
         cv.imshow("Image", self.img)
         # _, interior_wall = self.get_binary_with_type(img_type.interior_wall)
-        interior_wall = self.__get_binary_img(img_type.interior_wall)[0]
-        exterior_wall = self.__get_binary_img(img_type.exterior_wall)[0]
-        front_door = self.__get_binary_img(img_type.front_door)[0]
-        interior_door = self.__get_binary_img(img_type.interior_door)[0]
-
-        door = cv.add(front_door, interior_door)
-        cv.imshow("door", door)
-        self.wall = cv.add(interior_wall, exterior_wall)
-        self.wall = cv.add(self.wall, door)
-        cv.imshow("wall", self.wall)
-        cv.imshow("wall-door", self.wall - door)
-        # 生成墙体骨架和获取墙体厚度
-        self.skeleton = self.get_binary_skeleton()
-        cv.imshow("skeleton", self.skeleton)
-        self.thickness, expansion = self.__calc_wall_thickness()
+        # interior_wall = self.__get_binary_img(img_type.interior_wall)[0]
+        # exterior_wall = self.__get_binary_img(img_type.exterior_wall)[0]
+        # front_door = self.__get_binary_img(img_type.front_door)[0]
+        # interior_door = self.__get_binary_img(img_type.interior_door)[0]
+        #
+        # door = cv.add(front_door, interior_door)
+        # cv.imshow("door", door)
+        # self.wall = cv.add(interior_wall, exterior_wall)
+        # self.wall = cv.add(self.wall, door)
+        # cv.imshow("wall", self.wall)
+        # cv.imshow("wall-door", self.wall - door)
+        # # 生成墙体骨架和获取墙体厚度
+        # self.skeleton = self.get_binary_skeleton()
+        # cv.imshow("skeleton", self.skeleton)
+        # self.thickness, expansion = self.__calc_wall_thickness()
         # 输入墙体图生成网格图
-        grid = Grid_img(self.wall, self.thickness)
-        grid_img = grid.GenerateImage()
-        cv.imshow("gird img", grid_img)
+        # grid = Grid_img(self.wall, self.thickness)
+        # grid_img = grid.GenerateImage()
+        # cv.imshow("gird img", grid_img)
         # 生成气泡图
-        bubble_img = self.generate_bubble_img()
+        bubble_img = self.__generate_topology_image()
+        # bubble_img = self.generate_bubble_img()
         cv.imshow("bubble img", bubble_img)
         cv.waitKey(0)
         cv.destroyAllWindows()
@@ -646,7 +785,7 @@ class Floor_plan:
 
 if __name__ == '__main__':
     pass
-    floor_plan = Floor_plan(cv.imread("./dataset/10.png"))
+    floor_plan = Floor_plan(cv.imread("./dataset/7.png"))
     floor_plan.run()
     # testImage = cv.imread("./dataset/6.png")
     # box1 = AABB(Point(60, 60), Point(100, 100))
